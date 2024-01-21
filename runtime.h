@@ -231,6 +231,11 @@ struct SValue prim_displayln(struct SValue a){
     return constant_void;
 }
 
+struct SValue prim_display(struct SValue a){
+    print_SValue(a);
+    return constant_void;
+}
+
 struct SValue prim_make_vector(struct SValue len,struct SValue v){
     check_argument_type(len,INTEGER,"make-vector",1);
     return make_SVector((long long)len.ptr, v);
@@ -278,15 +283,34 @@ struct SValue prim_unbox(struct SValue b){
     return prim_vector_ref(b,make_SInteger(0));
 }
 
-void prim_halt(struct SValue v){
+
+
+void fun_halt(struct SValue v){
     exit(0);
 }
 
+void fun_contwrapper(struct SValue env, struct SValue x, struct SValue k_ignore){
+    struct SValue k = prim_vector_ref(env,make_SInteger(0));
+    // CONTINUATION MUST BE A PROCEDURE
+    struct SProcedure proc =*(struct SProcedure*)k.ptr;
+    (*(void (*)(struct SValue,struct SValue))proc.fptr)(proc.env,x);
+}
 
-
+void fun_callcc(struct SValue env,struct SValue f,struct SValue k){
+    if (f.type!= PROCEDURE){
+        raise_error("application: ", "not a procedure");
+    }
+    struct SProcedure proc = *(struct SProcedure*)f.ptr;
+    // wrap k 
+    struct SValue cont = make_SProcedure(fun_contwrapper, prim_box(k));
+    (*(void (*)(struct SValue,struct SValue,struct SValue))proc.fptr)(proc.env,cont,k);
+}
 
 struct SValue proc_halt; 
-
+struct SValue proc_callcc;
+// setup global environment
 void setup(){
-    proc_halt = make_SProcedure(prim_halt, make_SVector(0, constant_void));
+    struct SValue empty_env = make_SVector(0, constant_void);
+    proc_halt = make_SProcedure(fun_halt, empty_env);
+    proc_callcc = make_SProcedure(fun_callcc,empty_env);
 }

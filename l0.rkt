@@ -118,7 +118,8 @@
                                          (hash-set env key val)))
                           (expr.λ fresh-vars (map (λ (e) (loop e env*)) body))]
       [_ (expr.map ? expr)]))
-  (loop expr (hasheq)))
+  (loop expr (hasheq 'call/cc 'call/cc ;; keep track global env
+                     )))
 
 
 ;; set-eliminiation: assume alpha renamed

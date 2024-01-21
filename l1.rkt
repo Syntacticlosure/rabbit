@@ -133,7 +133,9 @@
   (define (conv/a atom env stack)
     (match atom
       [(atom.λ vars body)
-       (define freevars (set->list (set-subtract (varrefs body) (list->seteq vars))))
+       (define freevars (set->list (set-subtract
+                                    (set-subtract (varrefs body) (list->seteq vars))
+                                    (seteq 'call/cc))))
        (define env-sym (gensym 'env))
        (build-closure
         (atom.λ (cons env-sym vars)
@@ -166,7 +168,9 @@
                                       (string-join (map number->string (append (bytes->list (string->bytes/locale s))
                                                                                (list 0))) ","))]
     [(atom.halt) "proc_halt"]
-    [(atom.var n) (symbol->string n)];; λ is eliminated by clo conv
+    [(atom.var n) (if (eq? n 'call/cc)
+                      "proc_callcc"
+                      (symbol->string n))] ;; λ is eliminated by clo conv
     ))
 
 (define (prim->c-symbol p)
@@ -178,6 +182,7 @@
     ['* 'mul]
     ['/ 'div]
     ['displayln 'displayln]
+    ['display 'display]
     ['make-vector 'make_vector]
     ['vector-ref 'vector_ref]
     ['vector-set! 'vector_set]
