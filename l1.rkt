@@ -95,23 +95,23 @@
         (if i (list n i)
             (loop (cdr stack) (add1 n))))
       (loop stack 0))
-    (displayln (path (car vars)))
     (define paths (map path vars))
-    (displayln paths)
     (define max-parent-depth (apply max (map first paths)))
-    (displayln "!")
     ;; generate necessary parent-env access
     ;; generate-envs : -> (listof atom.var?)
     (define (generate-envs)
       (shift k
              (define env-syms (for/list ([i (in-range 1 (add1 max-parent-depth))])
                                 (gensym 'env)))
-             (for/fold ([body (k (cons env (map atom.var env-syms)))]
+             (define body (k (cons env (map atom.var env-syms))))
+             (define klist (for/fold ([klist '()]
                         [env env]
-                        #:result body)
+                        #:result klist)
                        ([env-sym env-syms])
-               (values (expr.prim 'vector-ref (list env (atom.lit 0)) env-sym body)
-                       (atom.var env-sym)))))
+               (values (cons (λ (body) (expr.prim 'vector-ref (list env (atom.lit 0)) env-sym body)) klist)
+                       (atom.var env-sym))))
+             (foldr (λ (k body)
+                      (k body)) body (reverse klist))))
     ;; generate bindings
     (define (generate-bindings envs)
       (shift k
@@ -150,20 +150,89 @@
       [(expr.prim op args bind cont) (expr.prim op (map (λ (x) (conv/a x env stack)) args)
                                                 bind (conv/e cont env stack))]
       [(expr.app f args) (expr.app (conv/a f env stack)
-                                   (cons env (map (λ (x) (conv/a x env stack)) args)))]))
+                                   (map (λ (x) (conv/a x env stack)) args))]))
   (define env-sym (gensym 'env))
   (list (expr.prim 'make-vector (list (atom.lit 0) (atom.lit #f))
                    env-sym (reset 
                             (conv/e expr (atom.var env-sym) '()))) global-env))
-         
 
 
-    
-             
-           
-           
-      
-                              
-           
+(: codegen/a (-> atom? string?))
+(define (codegen/a atom)
+  (match atom
+    [(atom.lit (? integer? i)) (format "make_SInteger(~a)" i)]
+    [(atom.lit (? boolean? b)) (format "make_SBoolean(~a)" (if b 1 0))]
+    [(atom.lit (? string? s)) (format "make_SString((unsigend char[]){~a})"
+                                      (string-join (map number->string (append (bytes->list (string->bytes/locale s))
+                                                                               (list 0))) ","))]
+    [(atom.halt) "proc_halt"]
+    [(atom.var n) (symbol->string n)];; λ is eliminated by clo conv
+    ))
 
+(define (prim->c-symbol p)
+  (match p
+    ['+ 'add]
+    ['add1 'add1]
+    ['- 'sub]
+    ['sub1 'sub1]
+    ['* 'mul]
+    ['/ 'div]
+    ['displayln 'displayln]
+    ['make-vector 'make_vector]
+    ['vector-ref 'vector_ref]
+    ['vector-set! 'vector_set]
+    ['make-closure 'make_closure]
+    ['zero? 'zero]
+    ['box 'box]
+    ['unbox 'unbox]
+    ['set-box! 'set_box]))
+
+(: codegen/e (-> expr? string?))
+(define (codegen/e expr)
+  (match expr
+    [(expr.if test then else)
+     (string-append (format "if(~a.ptr) {\n" (codegen/a test))
+                    (codegen/e then)
+                    "}else{\n"
+                    (codegen/e else)
+                    "}\n")]
+    [(expr.prim op args bind cont)
+     (string-append (format "struct SValue ~a=prim_~a(~a);\n" bind (prim->c-symbol op)
+                            (string-join (map codegen/a args) ","))
+                    (codegen/e cont))]
+    [(expr.app (app codegen/a f) args)
+     (define proc (gensym 'proc))
+     (define (fun-sig arity)
+       (format "void (*)(~a)" (string-join (build-list arity (λ (_)
+                                                               "struct SValue")) ",")))
+     (string-append (format "if(!(~a.type == PROCEDURE)) { raise_error(\"application\",\"not a procedure\"); }\n" f)
+                    (format "struct SProcedure ~a=*(struct SProcedure*)~a.ptr;\n" proc f)
+                    (format "(*(~a)~a.fptr)(~a);\n" 
+                            (fun-sig (add1 (length args)))
+                            proc
+                            (string-join (cons (format "~a.env" proc)
+                                                         (map codegen/a args)) ",")))]))
+
+(: codegen (-> (list/c expr? (hash/c symbol? atom.λ?)) string?))
+(define (codegen repr)
+  (match-define (list e funs) repr)
+  (define (codegen/λ name lam)
+    (match lam
+      [(atom.λ vars body) (string-append (format "void ~a(~a){\n" name
+                                                 (string-join (map (λ (v)
+                                                                     (format "struct SValue ~a" v)) vars)
+                                                              ","))
+                                         (codegen/e body)
+                                         "}\n")]))
+  (define lams (for/fold ([str ""])
+                         ([(k v) (in-hash funs)])
+                 (string-append str (codegen/λ k v))))
+  (string-append "#include \"runtime.h\"\n"
+                 lams
+                 "int main(){\n"
+                 "setup();\n"
+                 (codegen/e e)
+                 "}\n"))
+                         
+  
 

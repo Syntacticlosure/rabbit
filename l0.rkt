@@ -135,7 +135,6 @@
     (loop expr)
     mvars)
   (define mvars (mutable-vars expr))
-  (displayln mvars)
   (define (loop expr)
     (define ? loop)
     (define (?@ x) (map ? x))
