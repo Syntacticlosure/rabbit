@@ -17,7 +17,7 @@
                         [odd? (λ (x) (if (prim zero? x) #f
                                          (even? (prim sub1 x))))])
                  (prim displayln (even? 9))))
-
+#;
 (compile  `(let ([pos 0])
                  (let ([move (λ (x)
                                (set! pos (prim + x pos)))])
@@ -25,3 +25,5 @@
                    (move 100)
                    (move 9)
                    (prim displayln pos))))
+
+(compile `(prim displayln "hello world"))
