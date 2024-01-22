@@ -163,7 +163,7 @@
 (define (codegen/a atom)
   (match atom
     [(atom.lit (? integer? i)) (format "make_SInteger(~a)" i)]
-    [(atom.lit (? boolean? b)) (format "make_SBoolean(~a)" (if b 1 0))]
+    [(atom.lit (? boolean? b)) (if b "constant_true" "constant_false")]
     [(atom.lit (? string? s)) (format "make_SString((unsigned char[]){~a})"
                                       (string-join (map number->string (append (bytes->list (string->bytes/locale s))
                                                                                (list 0))) ","))]
