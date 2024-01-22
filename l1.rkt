@@ -105,11 +105,11 @@
                                 (gensym 'env)))
              (define body (k (cons env (map atom.var env-syms))))
              (define klist (for/fold ([klist '()]
-                        [env env]
-                        #:result klist)
-                       ([env-sym env-syms])
-               (values (cons (λ (body) (expr.prim 'vector-ref (list env (atom.lit 0)) env-sym body)) klist)
-                       (atom.var env-sym))))
+                                      [env env]
+                                      #:result klist)
+                                     ([env-sym env-syms])
+                             (values (cons (λ (body) (expr.prim 'vector-ref (list env (atom.lit 0)) env-sym body)) klist)
+                                     (atom.var env-sym))))
              (foldr (λ (k body)
                       (k body)) body (reverse klist))))
     ;; generate bindings
@@ -144,6 +144,7 @@
                          (generate-freevar-bindings freevars (atom.var env-sym) stack))
                        (conv/e body env (cons vars stack)))) env)]
       [_ atom]))
+  
   (define (conv/e expr env stack)
     (match expr
       [(expr.if test then else) (expr.if (conv/a test env stack)
@@ -158,86 +159,4 @@
                    env-sym (reset 
                             (conv/e expr (atom.var env-sym) '()))) global-env))
 
-
-(: codegen/a (-> atom? string?))
-(define (codegen/a atom)
-  (match atom
-    [(atom.lit (? integer? i)) (format "make_SInteger(~a)" i)]
-    [(atom.lit (? boolean? b)) (if b "constant_true" "constant_false")]
-    [(atom.lit (? string? s)) (format "make_SString((unsigned char[]){~a})"
-                                      (string-join (map number->string (append (bytes->list (string->bytes/locale s))
-                                                                               (list 0))) ","))]
-    [(atom.halt) "proc_halt"]
-    [(atom.var n) (if (eq? n 'call/cc)
-                      "proc_callcc"
-                      (symbol->string n))] ;; λ is eliminated by clo conv
-    ))
-
-(define (prim->c-symbol p)
-  (match p
-    ['+ 'add]
-    ['add1 'add1]
-    ['- 'sub]
-    ['sub1 'sub1]
-    ['* 'mul]
-    ['/ 'div]
-    ['displayln 'displayln]
-    ['display 'display]
-    ['make-vector 'make_vector]
-    ['vector-ref 'vector_ref]
-    ['vector-set! 'vector_set]
-    ['make-closure 'make_closure]
-    ['zero? 'zero]
-    ['box 'box]
-    ['unbox 'unbox]
-    ['set-box! 'set_box]))
-
-(: codegen/e (-> expr? string?))
-(define (codegen/e expr)
-  (match expr
-    [(expr.if test then else)
-     (string-append (format "if(~a.ptr) {\n" (codegen/a test))
-                    (codegen/e then)
-                    "}else{\n"
-                    (codegen/e else)
-                    "}\n")]
-    [(expr.prim op args bind cont)
-     (string-append (format "struct SValue ~a=prim_~a(~a);\n" bind (prim->c-symbol op)
-                            (string-join (map codegen/a args) ","))
-                    (codegen/e cont))]
-    [(expr.app (app codegen/a f) args)
-     (define proc (gensym 'proc))
-     (define (fun-sig arity)
-       (format "void (*)(~a)" (string-join (build-list arity (λ (_)
-                                                               "struct SValue")) ",")))
-     (string-append (format "if(!(~a.type == PROCEDURE)) { raise_error(\"application\",\"not a procedure\"); }\n" f)
-                    (format "struct SProcedure ~a=*(struct SProcedure*)~a.ptr;\n" proc f)
-                    (format "(*(~a)~a.fptr)(~a);\n" 
-                            (fun-sig (add1 (length args)))
-                            proc
-                            (string-join (cons (format "~a.env" proc)
-                                                         (map codegen/a args)) ",")))]))
-
-(: codegen (-> (list/c expr? (hash/c symbol? atom.λ?)) string?))
-(define (codegen repr)
-  (match-define (list e funs) repr)
-  (define (codegen/λ name lam)
-    (match lam
-      [(atom.λ vars body) (string-append (format "void ~a(~a){\n" name
-                                                 (string-join (map (λ (v)
-                                                                     (format "struct SValue ~a" v)) vars)
-                                                              ","))
-                                         (codegen/e body)
-                                         "}\n")]))
-  (define lams (for/fold ([str ""])
-                         ([(k v) (in-hash funs)])
-                 (string-append str (codegen/λ k v))))
-  (string-append "#include \"runtime.h\"\n"
-                 lams
-                 "int main(){\n"
-                 "setup();\n"
-                 (codegen/e e)
-                 "}\n"))
-                         
-  
 
