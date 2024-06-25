@@ -1,0 +1,108 @@
+#lang at-exp racket
+(require nanopass/base "l0.rkt" "l1.rkt" "stypes.rkt")
+(provide compile)
+(define-pass codegen : L1 (ir) -> * (any)
+  (definitions
+    (define bindto (make-parameter #f))
+    (define-syntax-rule (cvar x ...)
+      (begin (define x (~a (gensym 'x))) ...))
+    
+    (define text string-append)
+    (define (funargs lst)
+      (string-join
+       (map (λ (x) @text{SVALUE @(~a x)}) lst) ","))
+
+    (define (cstr s)
+      (define (align l)
+        (define size (length l))
+        (define over (remainder size 8))
+        (if (= over 0) l
+            (append l (build-list (- 8 over) (λ (_) 0)))))
+      (string-join (map number->string (align (append (bytes->list (string->bytes/locale s))
+                                                      (list 0)))) ","))
+
+    
+    (define (compile-prim prim args bindto)
+      (define (bind . texts)
+        (if bindto (apply string-append texts) ""))
+      (match* (prim args)
+        [('make-vector `(,len))
+         (cvar vec_space vec_len)
+         @text{size_t @|vec_len| = sizeof(SVECTOR) + 8*@len;
+          pSVECTOR @vec_space = alloca(@vec_len);
+          @|vec_space|->header = {STYPE_VECTOR, @|vec_len|, NULL};
+          @|vec_space|->len= @len;
+          @bind{SVALUE @bindto = (SVALUE)@vec_space;}
+          }]
+        [('vector-ref `(,vec ,idx))
+         @bind{SVALUE @bindto = (SVALUE*)((void*)@|vec| + sizeof(SVECTOR))[@|idx|];
+          }]
+        [('vector-set! `(,vec ,idx ,val))
+         @text{(SVALUE*)((void*)@|vec| + sizeof(SVECTOR))[@|idx|] = @|val|;
+          @bind{SVALUE @bindto = SVOID;}
+          }]
+        [('make-closure `(,fun ,env))
+         (cvar clo_space)
+         @text{pSPROCEDURE @clo_space = alloca(sizeof(SPROCEDURE));
+          @|clo_space|->header = {STYPE_PROCEDURE, sizeof(SPROCEDURE), NULL};
+          @|clo_space|->fptr = (void*)@fun;
+          @|clo_space|->env = @env;
+          @bind{SVALUE @bindto = (SVALUE)@clo_space;}
+          }]
+        [('closure-env `(,clo))
+         @bind{SVALUE @bindto = (pSPROCEDURE)@|clo|->env;
+          }]
+        [('box `(,val))
+         @text{@compile-prim['make-vector (list "1") bindto]
+          @(compile-prim 'vector-set! (list bindto "0" val) #f))}
+         ]
+        [('unbox `(,bx))
+         (compile-prim 'vector-ref (list bx "0") bindto)]
+        [('set-box! `(,bx ,val))
+         (compile-prim 'set-box! (list bx "0" val) bindto)]
+        ))
+    )
+  (Program : Program (ir) -> * (any)
+           [(,[decl] ...) (string-join decl "\n")])
+  (Decl : Decl (ir) -> * (any)
+        [(λ ,x (,x* ...) ,[e])
+         @text|{void |@(~a x)(|@(funargs x*)) {
+         |@e
+        }
+         }|]
+        [(cstring ,x ,c)
+         @text{SVALUE @(~a x) = CSTRING_MAKE((unsigned char[]){@(cstr c)});
+          }])
+  (Atom : Atom (ir) -> * (any)
+        [,x (~a x)]
+        [,c (cdata c)])
+  (Expr : Expr (ir) -> * (any)
+        [(begin ,[body*] ... ,[body])
+         (string-append (apply string-append body*) body)]
+        [(prim ,pr ,[a] ...)
+         (compile-prim pr a #f)]
+        [(let ,x ,pcall)
+         (nanopass-case (L1 PrimCall) pcall
+                        [(prim ,pr ,a ...)
+                         (compile-prim pr (map Atom a) (~a x))])]
+        [(,[a1] ,[a2] ...)
+         @text{@a1(@a1,@(string-join a2 ","));
+          }]
+        [(if ,[a] ,[e1] ,[e2])
+         @text{if (@a == @(cdata #f)){
+           @e1
+           }else{
+           @e2
+          }
+          }]
+        [(let-atom ,x ,[a])
+         @text{SVALUE @(~a x) = @a;
+          }])
+  (Program ir))
+
+(define-syntax-rule (compile f e)
+  (with-output-file f (λ (port)
+                        (display (with-gensym (codegen (l1-passes (with-output-language (L0 Expr)
+                                                                    e)))) port))
+    #:exists 'replace))
+  
